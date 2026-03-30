@@ -60,7 +60,8 @@ export async function processCheckout(
     if (existingOrder.status === 'FAILED') {
       return { statusCode: 402, body: buildErrorResponse(existingOrder) };
     }
-    // PENDING — return existing order as success response shape (simplified for this exercise)
+    // Simplified in-flight retry handling:
+    // we replay the success response shape instead of exposing a PENDING state externally.
     return { statusCode: 200, body: buildSuccessResponse(existingOrder) };
   }
 
