@@ -32,10 +32,18 @@ A serverless checkout service that processes e-commerce orders with guaranteed i
             ┌────────────┘         └────────────┐
             │ EXISTS                            │ NOT EXISTS
             ▼                                   ▼
-   ┌─────────────────┐                ┌─────────────────────┐
-   │ Return existing │                │ 3. Calculate Price  │
-   │     order       │                │    (server-side)    │
-   └─────────────────┘                └─────────────────────┘
+   ┌──────────────────┐               ┌─────────────────────┐
+   │ Compare payload  │               │ 3. Calculate Price  │
+   │ hash             │               │    (server-side)    │
+   └──────────────────┘               └─────────────────────┘
+        │            │
+   MATCH │            │ MISMATCH
+        ▼            ▼
+ ┌──────────────┐ ┌───────────────┐
+ │Return existing│ │ Return 409    │
+ │    order      │ │ IDEMPOTENCY_  │
+ └──────────────┘ │ CONFLICT      │
+                  └───────────────┘
                                                 │
                                                 ▼
                                       ┌─────────────────────┐
@@ -53,7 +61,7 @@ A serverless checkout service that processes e-commerce orders with guaranteed i
                               ▼                                   ▼
                     ┌─────────────────┐                ┌─────────────────┐
                     │ Update order    │                │ Update order    │
-                    │ status: COMPLETE│                │ status: FAILED  │
+                    │status: COMPLETED│                │ status: FAILED  │
                     └─────────────────┘                └─────────────────┘
                               │                                   │
                               ▼                                   ▼
@@ -103,6 +111,10 @@ Content-Type: application/json
 | `paymentMethodId` | string | Yes | Reference to payment method (e.g., tokenized card). |
 | `currency` | string | No | ISO 4217 currency code. Defaults to "USD". |
 
+### Cart Validity
+
+Cart validity is limited to structural validation: non-empty items array, valid field types, and value ranges (quantity >= 1, unitPrice >= 0). Product existence, duplicate line consolidation, and catalog price verification are out of scope for this exercise.
+
 ### Response Body (Success)
 
 ```json
@@ -146,6 +158,10 @@ Content-Type: application/json
 
 ## Pricing Rules
 
+### Price Authority
+
+Unit prices are provided in the request as input only. The server performs all pricing arithmetic and never trusts any client-computed total. A production system would typically validate prices against a product catalog, but that is out of scope for this exercise.
+
 ### Calculation
 
 1. **Line Total**: `quantity × unitPrice` (per item)
@@ -156,7 +172,7 @@ Content-Type: application/json
 ### Tax Rate
 
 - Default tax rate: **8%** (0.08)
-- Tax rate is configurable per request or via environment variable
+- Tax rate is configurable via environment variable or server configuration only (never client-supplied)
 - All monetary values are integers in cents (no floating point)
 
 ### Rounding
@@ -166,7 +182,7 @@ Content-Type: application/json
 
 ### Extensibility Notes
 
-The pricing calculation is isolated in a dedicated module (`pricing.ts`) to allow future additions:
+The pricing calculation is isolated in a dedicated module (`pricingService.ts`) to allow future additions:
 - Discount codes / coupons
 - Tiered pricing
 - Shipping costs
@@ -189,13 +205,15 @@ The pricing calculation is isolated in a dedicated module (`pricing.ts`) to allo
 | First request with `cartId` | Process checkout, create order, return result |
 | Retry with same `cartId` (order COMPLETED) | Return existing order (HTTP 200) |
 | Retry with same `cartId` (order FAILED) | Return existing failed order (HTTP 402) |
+| Retry with same `cartId` but different payload (items, paymentMethodId) | Return HTTP 409 with error code `IDEMPOTENCY_CONFLICT` |
 | Different `cartId` | Process as new checkout |
 
 ### Race Condition Handling
 
 - DynamoDB conditional writes prevent duplicate order creation
-- If two requests arrive simultaneously with the same `cartId`, only one will succeed in creating the order
-- The "losing" request will return the order created by the "winning" request
+- If two requests arrive simultaneously with the same `cartId` and identical payloads (matching `payloadHash`), only one order is created; the other returns the existing order
+- If two requests arrive with the same `cartId` but different payloads (mismatched `payloadHash`), the second returns `IDEMPOTENCY_CONFLICT` (HTTP 409)
+- In-flight duplicate checkout requests are intentionally simplified for this exercise; a production system would add stronger coordination or an explicit processing-state contract. See README for trade-off discussion
 
 ---
 
@@ -210,6 +228,7 @@ The pricing calculation is isolated in a dedicated module (`pricing.ts`) to allo
 | 400 | `INVALID_QUANTITY` | Item quantity is less than 1 |
 | 400 | `INVALID_PRICE` | Item price is negative |
 | 402 | `PAYMENT_FAILED` | Payment capture was declined |
+| 409 | `IDEMPOTENCY_CONFLICT` | Same `cartId` resubmitted with a different payload |
 | 500 | `INTERNAL_ERROR` | Unexpected server error |
 
 ### Error Response Examples
@@ -328,6 +347,8 @@ All log entries are structured JSON with the following fields:
 | `createdAt` | String | ISO 8601 timestamp |
 | `completedAt` | String | ISO 8601 timestamp (when finalized) |
 | `errorDetails` | Map | Present if status is FAILED |
+| `payloadHash` | String | SHA-256 hash of canonical request payload (`items` + `paymentMethodId`). Used to detect idempotency conflicts on retry. |
+| `ttl` | Number | Unix epoch expiry (7 days after `createdAt`). Enables DynamoDB TTL to auto-delete stale records, preventing unbounded table growth from abandoned carts. |
 
 ### Access Patterns
 
@@ -424,21 +445,28 @@ The mock provider uses deterministic behavior based on `paymentMethodId`:
 ## File Structure
 
 ```
-src/
-├── handlers/
-│   └── checkout.ts          # Lambda entry point
-├── services/
-│   ├── checkoutService.ts   # Orchestration logic
-│   ├── pricingService.ts    # Price calculation
-│   └── orderService.ts      # DynamoDB operations
-├── providers/
-│   ├── paymentProvider.ts   # Interface definition
-│   └── mockPaymentProvider.ts
-├── types/
-│   └── index.ts             # Shared types
-├── utils/
-│   ├── logger.ts            # Structured logging
-│   └── validation.ts        # Input validation
-└── errors/
-    └── index.ts             # Custom error classes
+├── src/
+│   ├── handlers/
+│   │   └── checkout.ts          # Lambda entry point
+│   ├── services/
+│   │   ├── checkoutService.ts   # Orchestration logic
+│   │   ├── pricingService.ts    # Price calculation
+│   │   └── orderService.ts      # DynamoDB operations
+│   ├── providers/
+│   │   ├── paymentProvider.ts   # Interface definition
+│   │   └── mockPaymentProvider.ts
+│   ├── types/
+│   │   └── index.ts             # Shared types
+│   ├── utils/
+│   │   ├── logger.ts            # Structured logging
+│   │   └── validation.ts        # Input validation
+│   └── errors/
+│       └── index.ts             # Custom error classes
+├── tests/                       # Unit tests covering all acceptance criteria
+│   ├── checkout.test.ts
+│   ├── pricing.test.ts
+│   └── validation.test.ts
+├── CHECKOUT_SPEC.md             # This file — behavioral source of truth
+├── AI_WORKFLOW.md               # Claude usage explanation and example prompts
+└── README.md                    # Design decisions, trade-offs, and run instructions
 ```
