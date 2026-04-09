@@ -82,6 +82,35 @@ describe('validateCheckoutRequest', () => {
     ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
   });
 
+  it('throws INVALID_REQUEST when quantity is not an integer', () => {
+    expect(() =>
+      validateCheckoutRequest({
+        ...validRequest,
+        items: [{ productId: 'prod_1', quantity: 1.5, unitPrice: 1000 }],
+      })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('throws INVALID_REQUEST when productId is missing', () => {
+    expect(() =>
+      validateCheckoutRequest({
+        ...validRequest,
+        items: [{ quantity: 1, unitPrice: 1000 }],
+      })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('throws INVALID_REQUEST when order total exceeds MAX_SAFE_INTEGER', () => {
+    expect(() =>
+      validateCheckoutRequest({
+        ...validRequest,
+        items: [
+          { productId: 'prod_1', quantity: Number.MAX_SAFE_INTEGER, unitPrice: 2 },
+        ],
+      })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
   it('returns a valid CheckoutRequest for valid input', () => {
     const result = validateCheckoutRequest(validRequest);
     expect(result).toEqual({

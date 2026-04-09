@@ -18,7 +18,9 @@ function buildSuccessResponse(order: Order): CheckoutSuccessResponse {
     pricing: order.pricing,
     currency: order.currency,
     createdAt: order.createdAt,
-    completedAt: order.completedAt!,
+    // Fall back to createdAt for in-flight retries where completedAt is not yet set.
+    // See README "In-Flight Duplicate Handling" for the simplification rationale.
+    completedAt: order.completedAt ?? order.createdAt,
   };
 }
 

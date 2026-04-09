@@ -233,4 +233,16 @@ describe('checkoutService', () => {
     const body = result.body as any;
     expect(body.currency).toBe('USD');
   });
+
+  it('falls back to createdAt for completedAt on PENDING in-flight retry', async () => {
+    const pendingOrder = buildExistingOrder({ status: 'PENDING', completedAt: undefined });
+    mockGetOrder.mockResolvedValue(pendingOrder);
+
+    const result = await processCheckout(validRequest, successPaymentProvider);
+
+    expect(result.statusCode).toBe(200);
+    const body = result.body as any;
+    expect(body.completedAt).toBe(pendingOrder.createdAt);
+    expect(successPaymentProvider.capturePayment).not.toHaveBeenCalled();
+  });
 });
