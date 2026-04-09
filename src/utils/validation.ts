@@ -8,6 +8,10 @@ import {
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const MAX_ID_LENGTH = 128;
+const MAX_ITEMS = 100;
+const CURRENCY_LENGTH = 3;
+
 export function validateCheckoutRequest(body: unknown): CheckoutRequest {
   if (!body || typeof body !== 'object') {
     throw new InvalidRequestError('Request body must be a JSON object');
@@ -27,6 +31,10 @@ export function validateCheckoutRequest(body: unknown): CheckoutRequest {
     throw new InvalidRequestError('paymentMethodId is required and must be a string');
   }
 
+  if (req.paymentMethodId.length > MAX_ID_LENGTH) {
+    throw new InvalidRequestError(`paymentMethodId must be ${MAX_ID_LENGTH} characters or fewer`);
+  }
+
   if (!Array.isArray(req.items)) {
     throw new InvalidRequestError('items is required and must be an array');
   }
@@ -35,8 +43,17 @@ export function validateCheckoutRequest(body: unknown): CheckoutRequest {
     throw new EmptyCartError();
   }
 
-  if (req.currency !== undefined && typeof req.currency !== 'string') {
-    throw new InvalidRequestError('currency must be a string');
+  if (req.items.length > MAX_ITEMS) {
+    throw new InvalidRequestError(`items must contain ${MAX_ITEMS} or fewer entries`);
+  }
+
+  if (req.currency !== undefined) {
+    if (typeof req.currency !== 'string') {
+      throw new InvalidRequestError('currency must be a string');
+    }
+    if (req.currency.length !== CURRENCY_LENGTH) {
+      throw new InvalidRequestError('currency must be a 3-character ISO 4217 code');
+    }
   }
 
   const items = req.items.map((item: unknown, index: number) => {
@@ -48,6 +65,10 @@ export function validateCheckoutRequest(body: unknown): CheckoutRequest {
 
     if (!i.productId || typeof i.productId !== 'string') {
       throw new InvalidRequestError(`items[${index}].productId is required and must be a string`);
+    }
+
+    if (i.productId.length > MAX_ID_LENGTH) {
+      throw new InvalidRequestError(`items[${index}].productId must be ${MAX_ID_LENGTH} characters or fewer`);
     }
 
     if (typeof i.quantity !== 'number' || !Number.isInteger(i.quantity)) {

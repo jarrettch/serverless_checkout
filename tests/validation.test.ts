@@ -100,6 +100,38 @@ describe('validateCheckoutRequest', () => {
     ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
   });
 
+  it('throws INVALID_REQUEST when productId exceeds max length', () => {
+    expect(() =>
+      validateCheckoutRequest({
+        ...validRequest,
+        items: [{ productId: 'p'.repeat(129), quantity: 1, unitPrice: 1000 }],
+      })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('throws INVALID_REQUEST when paymentMethodId exceeds max length', () => {
+    expect(() =>
+      validateCheckoutRequest({ ...validRequest, paymentMethodId: 'x'.repeat(129) })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('throws INVALID_REQUEST when currency is not 3 characters', () => {
+    expect(() =>
+      validateCheckoutRequest({ ...validRequest, currency: 'US' })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('throws INVALID_REQUEST when items array exceeds max size', () => {
+    const items = Array.from({ length: 101 }, (_, i) => ({
+      productId: `prod_${i}`,
+      quantity: 1,
+      unitPrice: 100,
+    }));
+    expect(() => validateCheckoutRequest({ ...validRequest, items })).toThrow(
+      expect.objectContaining({ code: 'INVALID_REQUEST' })
+    );
+  });
+
   it('throws INVALID_REQUEST when order total exceeds MAX_SAFE_INTEGER', () => {
     expect(() =>
       validateCheckoutRequest({
